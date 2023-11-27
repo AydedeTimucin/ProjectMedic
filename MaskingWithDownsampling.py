@@ -8,6 +8,7 @@ import numpy as np
 import cv2
 import argparse
 import math
+import sys
 
 def masking(slide_path, xml_path, output_dir):
 
@@ -17,6 +18,9 @@ def masking(slide_path, xml_path, output_dir):
 
     # Load the slide image
     slide = openslide.OpenSlide(slide_path)
+
+    mask_level = 5
+    downsample_factor = float(2 ** mask_level)
     target_downsample = math.log(int(round(slide.level_downsamples[-1])), 2)
 
     # Set the resolution of the slide image
@@ -40,15 +44,25 @@ def masking(slide_path, xml_path, output_dir):
     elif val_x < 0.6:  # resolution:0.5um/pixel
         current_res = 0.5
 
-    im_size = slide.level_dimensions[-1]
+    im_read_level = slide.get_best_level_for_downsample(downsample_factor)
+    im_read_size = slide.level_dimensions[im_read_level]
+
     target_res = 2 ** target_downsample
     real_length = target_res * current_res  # real length in micron
 
-    # Get the down sampled image
-    down_sampled_img = slide.read_region((0, 0), int(target_downsample), im_size)
+    # Get the downsampled image as a NumPy array
+    down_sampled_img_array = np.array(slide.read_region((0, 0), im_read_level, im_read_size))[:, :, :3]
+
+    # resize image to level6
+    im_size_level0 = slide.level_dimensions[0]
+    im_resized_size = (int(im_size_level0[0] / downsample_factor), int(im_size_level0[1] / downsample_factor))
+    resized_img_arr = cv2.resize(down_sampled_img_array, im_resized_size)
+
+    # Convert the NumPy array to a PIL Image
+    down_sampled_img_pil = PIL.Image.fromarray(resized_img_arr)
 
     # Initialize the tissue mask
-    mask_width, mask_height = im_size
+    mask_width, mask_height = slide.level_dimensions[-1]
     tissue_mask = np.zeros((mask_height, mask_width), dtype=np.uint8)
 
     # Initialize the RGB mask
@@ -137,15 +151,15 @@ def masking(slide_path, xml_path, output_dir):
     # Save the down sampled image
     output_file_name = slide_name + '.png'
     down_sampled_image_path = os.path.join(tissue_output_directory, output_file_name)
-    down_sampled_img.save(down_sampled_image_path)
+    down_sampled_img_pil.save(down_sampled_image_path)
 
     # Save the tissue mask as a PNG file
 
     output_file_name = slide_name + '(mask).png'
     output_path_mask = os.path.join(mask_output_directory, output_file_name)
 
-    img = PIL.Image.fromarray(inverted_tissue_mask)
-    img.save(output_path_mask)
+    mask_img = PIL.Image.fromarray(inverted_tissue_mask)
+    mask_img.save(output_path_mask)
 
     # Save the RGB mask as a PNG file
     """
@@ -159,7 +173,8 @@ def masking(slide_path, xml_path, output_dir):
     print(f"Total area: {round(im_area_px * real_length * real_length / 1000000, 3)} mm^2")
     print(f"Mask/Area percentage: %{round(Mask_area_ratio * 100, 3)}")
     print("-----------------------------------")
-
+    print("Mask size: ", mask_img.size, " Memory Usage:", os.stat(output_path_mask).st_size / 1024, " (KB)")
+    print("Tissue size: ", down_sampled_img_pil.size, " Memory Usage:", os.stat(down_sampled_image_path).st_size / 1024, " (KB)")
 
 slide_path = r"G:\train_data\Breast1__he\slides\TCGA-A1-A0SM-01Z-00-DX1.svs"
 xml_path = r"G:\train_data\Breast1__he\slides\TCGA-A1-A0SM-01Z-00-DX1.xml"
