@@ -9,6 +9,7 @@ import cv2
 import argparse
 import math
 import sys
+from tqdm import tqdm
 
 def masking(slide_path, xml_path, output_dir):
 
@@ -19,9 +20,8 @@ def masking(slide_path, xml_path, output_dir):
     # Load the slide image
     slide = openslide.OpenSlide(slide_path)
 
-    mask_level = 5
-    downsample_factor = float(2 ** mask_level)
-    target_downsample = math.log(int(round(slide.level_downsamples[-1])), 2)
+    mask_level = 6
+    downsample_factor = int(2 ** mask_level)
 
     # Set the resolution of the slide image
     try:
@@ -47,13 +47,13 @@ def masking(slide_path, xml_path, output_dir):
     im_read_level = slide.get_best_level_for_downsample(downsample_factor)
     im_read_size = slide.level_dimensions[im_read_level]
 
-    target_res = 2 ** target_downsample
+    target_res = downsample_factor
     real_length = target_res * current_res  # real length in micron
 
     # Get the downsampled image as a NumPy array
     down_sampled_img_array = np.array(slide.read_region((0, 0), im_read_level, im_read_size))[:, :, :3]
 
-    # resize image to level6
+    # resize image to original size
     im_size_level0 = slide.level_dimensions[0]
     im_resized_size = (int(im_size_level0[0] / downsample_factor), int(im_size_level0[1] / downsample_factor))
     resized_img_arr = cv2.resize(down_sampled_img_array, im_resized_size)
@@ -62,7 +62,8 @@ def masking(slide_path, xml_path, output_dir):
     down_sampled_img_pil = PIL.Image.fromarray(resized_img_arr)
 
     # Initialize the tissue mask
-    mask_width, mask_height = slide.level_dimensions[-1]
+    mask_width, mask_height = im_resized_size # for dir 1
+    #mask_width, mask_height = slide.level_dimensions[im_read_level] # for dir 2
     tissue_mask = np.zeros((mask_height, mask_width), dtype=np.uint8)
 
     # Initialize the RGB mask
@@ -116,7 +117,8 @@ def masking(slide_path, xml_path, output_dir):
             x2, y2 = bottom_right
             width, height = x2 - x1, y2 - y1
 
-            roi_information = [x1, y1, min(mask_width, width), min(mask_height, height)]  # [x, y, width, height]
+            #roi_information = [x1, y1, min(mask_width, width), min(mask_height, height)]  # [x, y, width, height]
+            roi_information = [x1, y1, mask_width, mask_height]
         roi_str = "-".join([str(roi_information[0]), str(roi_information[1]), str(roi_information[2]), str(roi_information[3])])
 
     # Invert the tissue mask
@@ -135,7 +137,7 @@ def masking(slide_path, xml_path, output_dir):
     """
 
     mask_output_directory = os.path.join(output_dir, "Masks")
-    tissue_output_directory = r"G:\down_scaled_images(level5)\Tissues"
+    tissue_output_directory = os.path.join(output_dir, "Tissues")
     #crop_info_directory = os.path.join(output_dir, "Crops_info")
 
     mask_output_directory = os.path.join(mask_output_directory, f'binary-mask')
@@ -175,9 +177,31 @@ def masking(slide_path, xml_path, output_dir):
     print("-----------------------------------")
     print("Mask size: ", mask_img.size, " Memory Usage:", os.stat(output_path_mask).st_size / 1024, " (KB)")
     print("Tissue size: ", down_sampled_img_pil.size, " Memory Usage:", os.stat(down_sampled_image_path).st_size / 1024, " (KB)")
+    print("++++++++++++++++++++++++++++++++++++")
 
-slide_path = r"G:\train_data\Breast1__he\slides\TCGA-A1-A0SM-01Z-00-DX1.svs"
-xml_path = r"G:\train_data\Breast1__he\slides\TCGA-A1-A0SM-01Z-00-DX1.xml"
-output_dir = r"G:\down_scaled_images(level5)"
 
-masking(slide_path, xml_path, output_dir)
+""" Change for every directory accordingly"""
+
+
+directory_path = r"G:\test_data\Breast1__he\slides"
+output_dir = r"G:\down_scaled_level6_test"
+
+# List all SVS files in the directory
+slide_files = [file for file in os.listdir(directory_path) if file.endswith(".svs")]  # svs, mrxs, ndpi, tif
+
+# Iterate through SVS files
+e_count = 0
+for slide_file in tqdm(slide_files, desc="Processing slide files"):
+    try:
+        # Construct the corresponding XML file path
+        xml_file = os.path.splitext(slide_file)[0] + ".xml"
+        xml_path = os.path.join(directory_path, xml_file)
+
+        # Call the masking function
+        masking(os.path.join(directory_path, slide_file), xml_path, output_dir)
+    except Exception as e:
+        print(f"{e} occured, skipping")
+        e_count += 1
+        continue
+print("Total error count: ", e_count)
+
