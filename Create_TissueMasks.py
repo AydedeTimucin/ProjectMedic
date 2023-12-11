@@ -95,13 +95,16 @@ def create_mask(args:list, wanted_rlength, create_rgb_image=False, additonal_inf
     # Get the openslide level that gives the wanted resolution
     for i in range(0, len(slide.level_downsamples)):
         downsample = np.round(slide.level_downsamples[i])
-        if downsample * current_res <= wanted_rlength:
+        ratio = downsample * current_res / wanted_rlength
+        if ratio <= 1:
+            openslide_to_wanted_ratio = ratio
             openslide_downsample = downsample
             openslide_level = i
     
     # Get the dimensions of the slide at the wanted resolution (width, height)
-    mask_width, mask_height = slide.level_dimensions[openslide_level][0], slide.level_dimensions[openslide_level][1]
+    or_mask_width, or_mask_height = slide.level_dimensions[openslide_level][0], slide.level_dimensions[openslide_level][1]
     
+    mask_width, mask_height = int(or_mask_width * openslide_to_wanted_ratio), int(or_mask_height * openslide_to_wanted_ratio)
     # Region of interest information for getting rid of unnecessary parts of the slide
     roi_information = [0, 0, mask_width, mask_height]
     
@@ -115,8 +118,8 @@ def create_mask(args:list, wanted_rlength, create_rgb_image=False, additonal_inf
             coordinates = []
             for co in ann.iter():
                 if co.tag == 'Coordinate':
-                    X = int(float(co.attrib.get('X').replace(',', '.')) / openslide_downsample)
-                    Y = int(float(co.attrib.get('Y').replace(',', '.')) / openslide_downsample)
+                    X = int(float(co.attrib.get('X').replace(',', '.')) / openslide_downsample*openslide_to_wanted_ratio)
+                    Y = int(float(co.attrib.get('Y').replace(',', '.')) / openslide_downsample*openslide_to_wanted_ratio)
                     coordinates.append([X, Y])
 
             vertices = np.array(coordinates, dtype=np.int32)
@@ -131,8 +134,8 @@ def create_mask(args:list, wanted_rlength, create_rgb_image=False, additonal_inf
                 child_coordinates = []
                 for co in child_ann.iter():
                     if co.tag == 'Coordinate':
-                        X = int(float(co.attrib.get('X').replace(',', '.')) / openslide_downsample)
-                        Y = int(float(co.attrib.get('Y').replace(',', '.')) / openslide_downsample)
+                        X = int(float(co.attrib.get('X').replace(',', '.')) / openslide_downsample*openslide_to_wanted_ratio)
+                        Y = int(float(co.attrib.get('Y').replace(',', '.')) / openslide_downsample*openslide_to_wanted_ratio)
                         child_coordinates.append([X, Y])
 
                 child_vertices = np.array(child_coordinates, dtype=np.int32)
@@ -142,8 +145,8 @@ def create_mask(args:list, wanted_rlength, create_rgb_image=False, additonal_inf
             roi_coordinates = []
             for co in ann.iter():
                 if co.tag == 'Coordinate':
-                    X = max(int(float(co.attrib.get('X').replace(',', '.')) / openslide_downsample), 0)
-                    Y = max(int(float(co.attrib.get('Y').replace(',', '.')) / openslide_downsample), 0)
+                    X = max(int(float(co.attrib.get('X').replace(',', '.')) / openslide_downsample*openslide_to_wanted_ratio), 0)
+                    Y = max(int(float(co.attrib.get('Y').replace(',', '.')) / openslide_downsample*openslide_to_wanted_ratio), 0)
                     roi_coordinates.append([X, Y])
                     
             top_left = roi_coordinates[0]
@@ -163,38 +166,43 @@ def create_mask(args:list, wanted_rlength, create_rgb_image=False, additonal_inf
     Mask_area_ratio = Mask_area_px / im_area_px
     
     # Create a mask info text
-    mask_info = [str(slide_id),str(source),str(slide_path),str(openslide_downsample*current_res),str(roi_str)]
     if additonal_info:
         mask_info = [str(slide_id),str(source),str(slide_path),str(openslide_downsample*current_res),str(roi_str),str(Mask_area_px),str(im_area_px),str(Mask_area_ratio)]
+    else:
+        mask_info = [str(slide_id),str(source),str(slide_path),str(openslide_downsample*current_res),str(roi_str)]
     
     
     # After inverting the mask, the tissue will be white and the background will be black
     inverted_tissue_mask = cv2.bitwise_not(tissue_mask)
     inverted_tissue_mask = Image.fromarray(inverted_tissue_mask)
     
+    slide_rgb = slide.read_region((0, 0), openslide_level, (or_mask_width, or_mask_height))
+    slide_rgb = slide_rgb.resize((mask_width, mask_height), Image.Resampling.LANCZOS)
+    slide_rgb = np.array(slide_rgb.convert("RGB"))
+    
+    
     if create_rgb_image:
         rgb_mask = np.zeros((mask_height, mask_width, 3), dtype=np.uint8)
-        slide_rgb = slide.read_region((0, 0), openslide_level, (mask_width, mask_height))
         
-        slide_rgb = np.array(slide_rgb.convert("RGB"))
+        
         rgb_mask[tissue_mask == 255] = slide_rgb[tissue_mask == 255]
 
         rgb_mask = Image.fromarray(rgb_mask)
         
         slide.close()
         
-        return inverted_tissue_mask, rgb_mask, mask_info
+        return Image.fromarray(slide_rgb), inverted_tissue_mask, rgb_mask, mask_info
     else:
         slide.close()
-        return inverted_tissue_mask, mask_info
+        return Image.fromarray(slide_rgb), inverted_tissue_mask, mask_info
     
     
     
 
     
 parser = argparse.ArgumentParser()
-parser.add_argument('--input_dir', type=str, default="D:/AIN3007_project/train_test_splited/test_data", help='The Directory that contains the "slides" folder.(test_data or train_data etc.)')
-parser.add_argument('--output_dir', type=str, default='D:/AIN3007_project/outputs', help='The directory of the output folder that will contain the masks.')
+parser.add_argument('--input_dir', type=str, default="D:/AIN3007_project/train_test_splited/train_data", help='The Directory that contains the "slides" folder.(test_data or train_data etc.)')
+parser.add_argument('--output_dir', type=str, default='D:/AIN3007_project/outputs_train', help='The directory of the output folder that will contain the masks.')
 parser.add_argument('--wanted_rlength', type=float, default=8, help='The wanted resolution of the mask in microns per pixel.')
 
 FLAGS = parser.parse_args()
@@ -226,28 +234,36 @@ for args in tqdm(slidelist):
     
     # Save the mask images
     if create_rgb_image:
-        mask_image, rgb_mask, mask_info = create_mask(args, wanted_rlength, create_rgb_image=True, additonal_info=additional_info)
+        slide_rgb, mask_image, rgb_mask, mask_info = create_mask(args, wanted_rlength, create_rgb_image=True, additonal_info=additional_info)
+        
+        slide_rgb_dir = os.path.join(source_dir, "slide_rgbs")
         binary_mask_dir = os.path.join(source_dir, "binary_masks")
         rgb_mask_dir = os.path.join(source_dir, "rgb_masks")
-        os.makedirs(rgb_mask_dir, exist_ok=True)
+        os.makedirs(slide_rgb_dir, exist_ok=True)
         os.makedirs(binary_mask_dir, exist_ok=True)
-
+        os.makedirs(rgb_mask_dir, exist_ok=True)
+        
+        slide_rgb.save(os.path.join(slide_rgb_dir, slide_id + ".png"))
         mask_image.save(os.path.join(binary_mask_dir, slide_id + ".png"))
         rgb_mask.save(os.path.join(rgb_mask_dir, slide_id + ".png"))
     
     
     else:
-        mask_image, mask_info = create_mask(args, wanted_rlength, create_rgb_image=False, additonal_info=additional_info)
+        slide_rgb, mask_image, mask_info = create_mask(args, wanted_rlength, create_rgb_image=False, additonal_info=additional_info)
+        
+        slide_rgb_dir = os.path.join(source_dir, "slide_rgbs")
         binary_mask_dir = os.path.join(source_dir, "binary_masks")
+        os.makedirs(slide_rgb_dir, exist_ok=True)
         os.makedirs(binary_mask_dir, exist_ok=True)
-    
+
+        slide_rgb.save(os.path.join(slide_rgb_dir, slide_id + ".png"))
         mask_image.save(os.path.join(binary_mask_dir, slide_id + ".png"))
 
 
 
     # Save the mask info
     mask_info_df.loc[len(mask_info_df)] = mask_info[0:5]
-    mask_info_df.to_csv(os.path.join(output_dir, "mask_info.csv"), index=False)
+    mask_info_df.to_csv(os.path.join(output_dir, "total_mask_info.csv"), index=False)
     
     if additional_info:
         additional_info_df.loc[len(additional_info_df)] = mask_info[0:2] + mask_info[5:]
