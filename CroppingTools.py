@@ -7,10 +7,10 @@ import imageio
 from tqdm.auto import tqdm
 
 
-def get_maskpath_for_df(root, df_row):
+def get_maskpath_for_df(root, df_row, folder_name = "binary_masks"):
     slide_id = df_row['slide_id']
     source = df_row['source']
-    mask_path = os.path.join(root, source, "binary_masks" , slide_id + '.png')
+    mask_path = os.path.join(root, source, folder_name , slide_id + '.png')
     return mask_path
 
 class Croppable:
@@ -505,3 +505,189 @@ def read_slide_to_level(slide, rlenght):
     slide_im = Image.fromarray(slide_im)
     slide_im = slide_im.resize((int(slide_im.size[0] * best_ratio), int(slide_im.size[1] * best_ratio)))
     return slide_im, openslide_downsample
+
+
+
+
+
+def GoRforgiveme(croppable: Croppable, crop_level_list: list, crop_size_list: list, out_dir):
+    
+    def patch_n_mask_division(patch_im, patch_num:int, patch_coords, mask_coords:tuple, mask_arr, level_0_size:int, wanted_level:int, wanted_size:int):
+        """
+        returns list of patches, patches_info, accepted_mask_patch, num_tissue_patches
+        
+        patch_im: patch image
+        patch_num: number of the original patch
+        patch_coords: base level coordinates(x/width, y/height) of the patch (top left corner)
+        mask_coords: mask coordinates(x/width, y/height) of the patch (top left corner)
+        mask_arr: mask np.array
+        level_0_size: size of the patch at level 0 (2**croplevel x cropsize)
+        wanted_level: level of the wanted patch
+        wanted_size: size of the wanted patch
+        """
+        
+        wanted_0_size = (2**wanted_level) * wanted_size
+        
+        if level_0_size < wanted_0_size:
+            raise ValueError("Cannot crop to a level/size larger than the given level/size.")
+        
+        original_to_small = level_0_size / wanted_0_size
+        if not original_to_small % 1 == 0:
+            raise ValueError("level_0_size must be a multiple of wanted_0_size")
+        
+        original_to_small = int(original_to_small)
+        patch_arr = np.array(patch_im)[:,:,:3]
+        
+        small_patch_size = patch_arr.shape[0] / original_to_small
+        small_mask_size = mask_arr.shape[0] / original_to_small
+        accepted_mask = np.ones(mask_arr.shape)*255
+        
+        patches = []
+        patch_infos = []
+        num_patch = original_to_small**2 * patch_num
+        num_tissue = 0
+        for row in range(original_to_small):
+            for col in range(original_to_small):
+                patch = patch_arr[int(row*small_patch_size):int((row+1)*small_patch_size),int(col*small_patch_size):int((col+1)*small_patch_size),:]
+                patch = Image.fromarray(patch)
+                patch = patch.resize((wanted_size, wanted_size), Image.LANCZOS)
+                patches.append(patch)
+
+                mask_patch = mask_arr[int(row*small_mask_size):int((row+1)*small_mask_size),int(col*small_mask_size):int((col+1)*small_mask_size)]
+                tissue_ratio = np.sum(mask_patch) / (small_mask_size**2)
+                if tissue_ratio > 0.1:
+                    accepted_mask[int(row*small_mask_size):int((row+1)*small_mask_size),int(col*small_mask_size):int((col+1)*small_mask_size)] = 0
+                    lbl = "tissue"
+                    num_tissue += 1
+                else:
+                    lbl = "background"
+                #                   patch_num, lbl, tissue_ratio, bg_ratio, base_level_coords(x,y), mask_coords(x,y), mask_level
+                patch_infos.append((num_patch,
+                                    lbl,
+                                    round(tissue_ratio, 3),
+                                    round(1- tissue_ratio, 3),
+                                    (int(patch_coords[0] + col*small_patch_size), int(patch_coords[1] + row*small_patch_size)),
+                                    (int(mask_coords[0] + col*small_mask_size), int(mask_coords[1] + row*small_mask_size))
+                                    ))
+                num_patch += 1
+
+        return patches, patch_infos, accepted_mask, num_tissue
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    try:
+        slide = croppable.Load_Slide()
+
+        crop_level = max(crop_level_list)
+        crop_size = max(crop_size_list)
+        level_0_size = (2**crop_level) * crop_size
+        
+
+        # Current Level Variables
+        (_, _, CL_w, CL_h) = croppable.calculate_roi_for_level(crop_level)
+        CL_Wrange, CL_Hrange = calculate_ranges((crop_size,crop_size),(CL_w,CL_h))
+
+        # Mask Variables
+        mask_lvl = croppable.mask_level
+        mask_im = np.array(Image.open(croppable.mask_path))[:,:]/255
+        mask_im = mask_im.astype(bool)
+        mask_im = np.invert(mask_im) #False = bg, True = tissue
+        (mask_x, mask_y, _, _) = croppable.calculate_roi_for_level(croppable.mask_level)
+        (mask_cropsize, mask_stride) = croppable.calculate_mask_crops(crop_level,crop_size)
+        
+        if mask_cropsize / 2**(min(crop_size_list) - crop_size) < 1:
+            raise ValueError("Some levels are too small for the mask.")
+        
+        # Base Level Variables
+        slide_base_level = croppable.slide_base_level
+        (base_x, base_y, base_width, base_height) = croppable.calculate_roi_for_level(slide_base_level)
+        (base_cropsize, base_stride), read_level = croppable.calculate_baselevel_crops(crop_level,crop_size)
+        base_Wrange, base_Hrange = calculate_ranges((base_cropsize,base_cropsize),(base_width,base_height))
+        remaining_base_width = (base_cropsize * base_Wrange) - base_width
+        remaining_base_height = (base_cropsize * base_Hrange) - base_height
+
+
+        # Directory Variables
+        out_dir = os.path.join(out_dir,"Cropped_slides", croppable.source)
+        slide_dirs_dict = {}
+        patch_dirs_dict = {}
+        info_dirs_dict = {}
+        accepted_patch_mask_dict = {}
+
+        for level in crop_level_list:
+            for size in crop_size_list:
+                size = int(size * 2**(crop_level - level))
+                slide_dir = os.path.join(out_dir, f"level_{level}_size_{size}", croppable.slide_id)
+                slide_dirs_dict[(level,size)] = slide_dir
+                patch_dirs_dict[(level,size)] = os.path.join(slide_dir, "patches")
+                info_dirs_dict[(level,size)] = (os.path.join(slide_dir, "patch_info.txt"), os.path.join(slide_dir, "general_info.txt"))
+                accepted_patch_mask_dict[(level,size)] = np.ones(mask_im.shape)*255
+                os.makedirs(patch_dirs_dict[(level,size)], exist_ok = True)
+                with open(info_dirs_dict[(level,size)][0], "w") as f:
+                    f.write("patch_num,label,tissue_ration,bg_ratio,base_coords,mask_coords,mask_lvl\n")
+                    
+        # Numbers to keep track
+        num_patches = 0
+        num_tissue_patches = {key:0 for key in accepted_patch_mask_dict.keys()}
+        print("Slide: ", croppable.slide_id)
+        print("Mpp: ", croppable.mpp)
+        prog_bar = tqdm(total = CL_Hrange * CL_Wrange, desc = "Cropping patches")
+        # Crop and save
+        for row in range(CL_Hrange): #height
+            for col in range(CL_Wrange): #width
+                    
+                base_coords = (base_x + col*base_stride,base_y + row*base_stride)
+                patch = slide.read_region(base_coords,read_level,(base_cropsize,base_cropsize))
+                
+                patch = np.array(patch)[:,:,:3]
+                if row == CL_Hrange - 1:
+                    patch = pad_crop_bottom(patch, base_cropsize, remaining_base_height, pad_with = "white")
+                if col == CL_Wrange - 1:
+                    patch = pad_crop_right(patch, base_cropsize, remaining_base_width, pad_with = "white")
+                    
+                    
+                #do mask calculation and patch division here using the function you define above
+                mask_x_start, mask_x_end = mask_x + col*mask_stride, mask_x + col*mask_stride + mask_cropsize
+                mask_y_start, mask_y_end = mask_y + row*mask_stride, mask_y + row*mask_stride + mask_cropsize
+                patch_mask = mask_im[mask_y_start:mask_y_end, mask_x_start:mask_x_end]
+                
+                for wanted_crop_level in crop_level_list:
+                    for wanted_size in crop_size_list:
+                        wanted_size = int(wanted_size * 2**(crop_level - wanted_crop_level))
+                        patches, patch_infos, accepted_mask, num_tissue = patch_n_mask_division(patch, num_patches, base_coords, (mask_x_start, mask_y_start), patch_mask, level_0_size, wanted_crop_level, wanted_size)
+                        for i in range(len(patches)):
+                            patch_temp = patches[i]
+                            patch_temp_dir = os.path.join(patch_dirs_dict[(wanted_crop_level,wanted_size)], f"{patch_infos[i][0]}_{patch_infos[i][1]}.jpeg")
+                            patch_temp.save(patch_temp_dir)
+                            with open(info_dirs_dict[(wanted_crop_level,wanted_size)][0], "a") as f: #[0] = patch_info, [1] = general_info
+                                        #patch_num, lbl, tissue_ratio, base_level_coords(x,y), mask_coords(x,y), created_mask_level
+                                f.write(f"{patch_infos[i][0]},{patch_infos[i][1]},{patch_infos[i][2]},{patch_infos[i][3]},{patch_infos[i][4]},{patch_infos[i][5]},{mask_lvl}\n")
+                        
+                        accepted_patch_mask_dict[(wanted_crop_level,wanted_size)][mask_y_start:mask_y_end, mask_x_start:mask_x_end] = accepted_mask
+                        num_tissue_patches[(wanted_crop_level,wanted_size)] += num_tissue
+                
+                prog_bar.update(1)
+                num_patches += 1
+                
+        for key in accepted_patch_mask_dict: #one of the dicts is enough because they all have the same keys
+            accepted_patch_mask_dict[key] = accepted_patch_mask_dict[key][0:mask_im.shape[0], 0:mask_im.shape[1]]
+            accepted_patch_mask_dict[key] = accepted_patch_mask_dict[key].astype(np.uint8)
+            imageio.imwrite(os.path.join(slide_dirs_dict[key], "accepted_mask.PNG"), accepted_patch_mask_dict[key])                
+            with open(info_dirs_dict[key][1], "w") as f: #[0] = patch_info, [1] = general_info
+                f.write(f"slide_path: {croppable.slide_path}\n")
+                f.write(f"mask_path: {croppable.mask_path}\n")
+                f.write(f"slide_id: {croppable.slide_id}\n")
+                f.write(f"source: {croppable.source}\n")
+                f.write(f"mpp: {croppable.mpp}\n")
+                f.write(f"num_patches: {num_patches}\n")
+                f.write(f"num_tissue_patches: {num_tissue_patches[key]}\n")
+                f.write(f"tissue_ratio: {num_tissue_patches[key]/num_patches*((level_0_size/((2**key[0]) * key[1]))**2)}\n")
+                
+    except Exception as e:
+        raise RuntimeError("Error occured at: ", croppable.slide_id) from e

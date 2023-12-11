@@ -96,7 +96,6 @@ for slide_path, xml_file_path, source, patient_id, slide_id, data_type in slidel
 
     # Load the XML file
     tree = etree.parse(xml_file_path)
-    root = tree.getroot()
 
     # Load the slide image
     slide = openslide.OpenSlide(slide_path)
