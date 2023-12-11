@@ -163,9 +163,9 @@ def create_mask(args:list, wanted_rlength, create_rgb_image=False, additonal_inf
     Mask_area_ratio = Mask_area_px / im_area_px
     
     # Create a mask info text
-    mask_info = [str(slide_id),str(source),str(slide_path),str(wanted_rlength),str(roi_str)]
+    mask_info = [str(slide_id),str(source),str(slide_path),str(openslide_downsample*current_res),str(roi_str)]
     if additonal_info:
-        mask_info = [str(slide_id),str(source),str(slide_path),str(wanted_rlength),str(roi_str),str(Mask_area_px),str(im_area_px),str(Mask_area_ratio)]
+        mask_info = [str(slide_id),str(source),str(slide_path),str(openslide_downsample*current_res),str(roi_str),str(Mask_area_px),str(im_area_px),str(Mask_area_ratio)]
     
     
     # After inverting the mask, the tissue will be white and the background will be black
