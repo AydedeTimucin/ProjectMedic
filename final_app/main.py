@@ -29,7 +29,7 @@ parser.add_argument(
 parser.add_argument(
     "--output_folder",
     type=str,
-    default=".\\predicted_tissue_masks",
+    default="desired_path",
     help="Folder to save the predicted tissue masks (default: ./predicted_tissue_masks)",)
 
 args = parser.parse_args()
@@ -37,67 +37,74 @@ args = parser.parse_args()
 wsi_paths_file = args.wsi_paths
 output_folder = args.output_folder
 
-slide = openslide.OpenSlide(wsi_paths_file)
 
-stride = 512
+with open(wsi_paths_file, "r") as f:
+    wsi_paths = f.readlines()
+    
 
-level = utils.pick_best_level(slide=slide, stride=stride, max_patch_num=400, min_patch_num=20)
+for i in range(len(wsi_paths)):
+    wsi_paths[i] = wsi_paths[i].strip()
+    slide = openslide.OpenSlide(wsi_paths[i])
 
-level_dim = level - slide.level_count
+    stride = 512
 
-prediction_model = model.UNet()
-saved_model_path = r"ProjectMedic\final_app\unet_best_dice(512).pth"
-prediction_model.load_state_dict(torch.load(saved_model_path))
+    level = utils.pick_best_level(slide=slide, stride=stride, max_patch_num=400, min_patch_num=20)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print("Using device:", device)
+    level_dim = level - slide.level_count
 
-prediction_model.to(device)
+    prediction_model = model.UNet()
+    saved_model_path = r"ProjectMedic/final_app/unet_best_dice(512).pth"
+    prediction_model.load_state_dict(torch.load(saved_model_path))
 
-prediction_model.eval()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print("Using device:", device)
 
-# I edited this line -Burak
-downscale = int(slide.level_downsamples[level_dim])
+    prediction_model.to(device)
 
-slide_width, slide_height = slide.level_dimensions[level]
+    prediction_model.eval()
 
-mask_width = math.ceil(slide_width / stride) * stride
-mask_height = math.ceil(slide_height / stride) * stride
+    # I edited this line -Burak
+    downscale = int(slide.level_downsamples[level_dim])
 
-big_mask = np.zeros((mask_height, mask_width), dtype=np.float32)
+    slide_width, slide_height = slide.level_dimensions[level]
 
-# Loop over the slide in 512x512 frames
-for y in tqdm(range(0, slide_height, stride), desc="Processing rows"):
-    for x in range(0, slide_width, stride):
-        # Extract a patch from the slide
-        x_0 = int(x * downscale) 
-        y_0 = int(y * downscale)
+    mask_width = math.ceil(slide_width / stride) * stride
+    mask_height = math.ceil(slide_height / stride) * stride
 
-        patch = slide.read_region((x_0, y_0), level, (stride, stride))
-        patch_np = np.array(patch)
+    big_mask = np.zeros((mask_height, mask_width), dtype=np.float32)
 
-        # Preprocess the patch
-        patch_processed = utils.adaptive_histogram_equalization(image=patch_np)
+    # Loop over the slide in 512x512 frames
+    for y in tqdm(range(0, slide_height, stride), desc="Processing rows"):
+        for x in range(0, slide_width, stride):
+            # Extract a patch from the slide
+            x_0 = int(x * downscale) 
+            y_0 = int(y * downscale)
 
-        # Get the prediction
-        prediction_mask = utils.mask_patch(patch=patch_processed, prediction_model=prediction_model, device=device)
+            patch = slide.read_region((x_0, y_0), level, (stride, stride))
+            patch_np = np.array(patch)
 
-        # Construct the mask
-        big_mask[y:y + stride, x:x + stride] = prediction_mask
+            # Preprocess the patch
+            patch_processed = utils.adaptive_histogram_equalization(image=patch_np)
 
-# post_process the mask and save
-final_mask = utils.soften_binary_prediction(mask=big_mask, sigma=20)
-final_mask_image = (final_mask * 255).astype(np.uint8)
-image = Image.fromarray(final_mask_image)
+            # Get the prediction
+            prediction_mask = utils.mask_patch(patch=patch_processed, prediction_model=prediction_model, device=device, treshold=0.5)
 
-if not os.path.exists(output_folder):
-    os.makedirs(output_folder)
+            # Construct the mask
+            big_mask[y:y + stride, x:x + stride] = prediction_mask
 
-slide_name = os.path.splitext(wsi_paths_file)[0].split("\\")[-1]
+    # post_process the mask and save
+    final_mask = utils.soften_binary_prediction(mask=big_mask, sigma=20)
+    final_mask_image = (final_mask * 255).astype(np.uint8)
+    image = Image.fromarray(final_mask_image)
 
-output_path = os.path.join(output_folder, f"(masked) {slide_name}.png")
-image.save(output_path)
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
 
-end_time = time.time()
-elapsed_time = end_time - start_time
-print(f"Elapsed Time: {elapsed_time} seconds")
+    slide_name = os.path.splitext(wsi_paths[i])[0].split("\\")[-1].split("/")[-1]
+
+    output_path = os.path.join(output_folder, f"(masked) {slide_name}.png")
+    image.save(output_path)
+
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"Elapsed Time: {elapsed_time} seconds")

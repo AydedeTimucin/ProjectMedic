@@ -37,13 +37,13 @@ def pick_best_level(slide, stride, max_patch_num, min_patch_num):
 
 
 # Used to create binary masks
-def mask_patch(patch: np.array, prediction_model: model.UNet(), device: torch.device) -> torch.Tensor():
+def mask_patch(patch: np.array, prediction_model: model.UNet(), device: torch.device, treshold = 0.5) -> torch.Tensor():
     patch_tensor = torchvision.transforms.ToTensor()(patch)
     patch_tensor = patch_tensor.unsqueeze(0).to(device)
 
     with torch.no_grad():
         prediction = prediction_model(patch_tensor)
-        threshold = 0.5
+        threshold = treshold
         binary_prediction = (prediction > threshold).int()
         binary_prediction_np = binary_prediction.cpu().numpy()[0, 0]
 
