@@ -37,7 +37,7 @@ def get_slidelist(folder_dir):
             slide_path = slide_path.replace("\\", "/")
             xml_file_path = os.path.join(folder_dir, dir, "slides", ".".join(file.split(".")[0:-1]) + ".xml")
             xml_file_path = xml_file_path.replace("\\", "/")
-                                #slide_path, xml_file_path, source, patient_id, slide_id
+                                #slide_path, xml_file_path, source, slide_id
             slidelist.append([slide_path, xml_file_path, dir, ".".join(file.split(".")[0:-1])])
             
     return slidelist
@@ -203,7 +203,7 @@ def create_mask(args:list, wanted_rlength, create_rgb_image=False, additonal_inf
 parser = argparse.ArgumentParser()
 parser.add_argument('--input_dir', type=str, default="D:/AIN3007_project/train_test_splited/train_data", help='The Directory that contains the "slides" folder.(test_data or train_data etc.)')
 parser.add_argument('--output_dir', type=str, default='D:/AIN3007_project/outputs_train', help='The directory of the output folder that will contain the masks.')
-parser.add_argument('--wanted_rlength', type=float, default=8, help='The wanted resolution of the mask in microns per pixel.')
+parser.add_argument('--wanted_rlength', type=float, default=16, help='The wanted resolution of the mask in microns per pixel.')
 
 FLAGS = parser.parse_args()
 

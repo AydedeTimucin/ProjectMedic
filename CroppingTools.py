@@ -435,6 +435,7 @@ def crop_for_predict(img, cropsize: int, stride = None):
     Takes an RGB slide image at the specified croplevel and crops it into a list of images of size cropsize.
     
     returns a list of cropped image arrays and their coordinates in the original image as a tuple.(top left corner)
+    (x, y) = (width, height)
     """
         
     if cropsize == 0:
@@ -453,21 +454,54 @@ def crop_for_predict(img, cropsize: int, stride = None):
         
     n_crops_height = int(np.ceil(height/stride)) # +0.4 to make sure we get the last crop
     n_crops_width = int(np.ceil(width/stride))# if the remaining pixels are less than stride
-    img = np.pad(img, ((cropsize,0), (cropsize,0), (0, 0)), mode='constant', constant_values=242 ) #may cause multiprocessing problems.
     
-    for row in range(n_crops_height + cropsize//stride): # we start cropping from one cropsize above the image
-        for col in range(n_crops_width + cropsize//stride): # we start cropping from one cropsize right of the image
+    for row in range(n_crops_height): # we start cropping from one cropsize above the image
+        for col in range(n_crops_width): # we start cropping from one cropsize right of the image
             patch = img[row*stride:min(row*stride + cropsize, height), col*stride:min(col*stride + cropsize, width), :]
-            padded_patch = np.pad(patch, ((0, cropsize - patch.shape[0]), (0, cropsize - patch.shape[1]), (0, 0)), mode='constant', constant_values=242 ) #may cause multiprocessing problems.
+            padded_patch = np.pad(patch, ((0, cropsize - patch.shape[0]), (0, cropsize - patch.shape[1]), (0, 0)), mode='constant', constant_values=255 ) #may cause multiprocessing problems.
             cropslist.append(padded_patch)
-            coordinates_list.append(((row*stride - cropsize), (col*stride - cropsize))) # top left corner coordinates
+            coordinates_list.append(((col*stride), (row*stride))) # top left corner coordinates
     
     del img, patch, padded_patch
     return cropslist , coordinates_list
 
+def crop_for_predict_padded(img, cropsize: int, stride = None):
+    """
+    Takes an RGB slide image at the specified croplevel and crops it into a list of images of size cropsize.
+    
+    returns a list of cropped image arrays and their coordinates in the original image as a tuple.(top left corner)
+    (x, y) = (width, height)
+    """
+        
+    if cropsize == 0:
+        print("Cropsize can't be 0")
+    if stride == 0:
+        print("Stride can't be 0")
+    
+    img = np.array(img)
+    cropslist = []
+    coordinates_list = []
+    height, width, _ = img.shape
+    cropsize = min(cropsize, height, width)
+    if stride == None:
+        stride = cropsize
+    stride = min(stride, height, width)
+        
+    n_crops_height = int(np.ceil(height/stride)) # +0.4 to make sure we get the last crop
+    n_crops_width = int(np.ceil(width/stride))# if the remaining pixels are less than stride
+    img = np.pad(img, ((cropsize,cropsize), (cropsize,cropsize), (0, 0)), mode='constant', constant_values=255 ) #may cause multiprocessing problems.
+    
+    for row in range(n_crops_height + 2*(cropsize//stride)): # we start cropping from one cropsize above the image
+        for col in range(n_crops_width + 2*(cropsize//stride)): # we start cropping from one cropsize right of the image
+            patch = img[row*stride:min(row*stride + cropsize, height + cropsize), col*stride:min(col*stride + cropsize, width + cropsize), :]
+            padded_patch = np.pad(patch, ((0, cropsize - patch.shape[0]), (0, cropsize - patch.shape[1]), (0, 0)), mode='constant', constant_values=255 ) #may cause multiprocessing problems.
+            cropslist.append(padded_patch)
+            coordinates_list.append(((col*stride - cropsize), (row*stride - cropsize))) # top left corner coordinates
+    
+    del img, patch, padded_patch
+    return cropslist , coordinates_list
 
-
-def read_slide_to_level(slide, rlenght):
+def read_slide_to_level(slide, rlenght) -> tuple[Image.Image, int]:
     """
     returns an image at the specified level from an openslide object.
     """
@@ -504,7 +538,7 @@ def read_slide_to_level(slide, rlenght):
     slide_im = np.array(slide_im)[:,:,:3]
     slide_im = Image.fromarray(slide_im)
     slide_im = slide_im.resize((int(slide_im.size[0] * best_ratio), int(slide_im.size[1] * best_ratio)))
-    return slide_im, openslide_downsample
+    return slide_im, openslide_downsample/best_ratio
 
 
 
