@@ -2,7 +2,7 @@ import utils
 import model
 
 import os
-#os.add_dll_directory(r'C:\ProgramData\anaconda3\envs\MedicalAI\Lib\site-packages\openslide-win64-20231011\bin')
+import sys
 
 import argparse
 import openslide
@@ -57,6 +57,7 @@ for i in range(len(wsi_paths)):
     prediction_model.load_state_dict(torch.load(saved_model_path))
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(torch.cuda.is_available())
     print("Using device:", device)
 
     prediction_model.to(device)
@@ -87,7 +88,7 @@ for i in range(len(wsi_paths)):
             patch_processed = utils.adaptive_histogram_equalization(image=patch_np)
 
             # Get the prediction
-            prediction_mask = utils.mask_patch(patch=patch_processed, prediction_model=prediction_model, device=device, treshold=0.5)
+            prediction_mask = utils.mask_patch(patch=patch_processed, prediction_model=prediction_model, device=device, treshold=0.42)
 
             # Construct the mask
             big_mask[y:y + stride, x:x + stride] = prediction_mask
@@ -102,7 +103,7 @@ for i in range(len(wsi_paths)):
 
     slide_name = os.path.splitext(wsi_paths[i])[0].split("\\")[-1].split("/")[-1]
 
-    output_path = os.path.join(output_folder, f"(masked) {slide_name}.png")
+    output_path = os.path.join(output_folder, f"{slide_name}_unet.png")
     image.save(output_path)
 
     end_time = time.time()

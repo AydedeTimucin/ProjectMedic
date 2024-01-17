@@ -34,3 +34,9 @@ class UNet(nn.Module):
         x = self.decoder(x1)
 
         return x
+    
+model = UNet()
+total_params = sum(
+    param.numel() for param in model.parameters()
+)
+print(f'{total_params:,} total parameters.')
